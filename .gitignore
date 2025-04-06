@@ -1,3 +1,15 @@
+# STM32CubeIDE build folders
+/Debug/
+/Release/
+/build/
+
+# IDE specific
+.settings/language.settings.xml
+*.launch
+
+# Misc
+*.log
+
 # Prerequisites
 *.d
 
