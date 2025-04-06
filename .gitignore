@@ -1,7 +1,7 @@
 # STM32CubeIDE build folders
-/Debug/
-/Release/
-/build/
+*/Debug/
+*Release/
+*build/
 
 # IDE specific
 .settings/language.settings.xml
