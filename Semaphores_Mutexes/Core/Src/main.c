@@ -24,6 +24,8 @@
 /* USER CODE BEGIN Includes */
 #include "semphr.h"
 #include "FreeRTOS.h"
+#include <stdio.h>
+#include "string.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -38,19 +40,30 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
+#define BUFFER_SIZE 5
 /* USER CODE END PM */
 
-/* Private variables --------------S-------------------------------------------*/
+/* Private variables ---------------------------------------------------------*/
 UART_HandleTypeDef huart2;
 
 osThreadId defaultTaskHandle;
 osThreadId myTask02Handle;
 osThreadId myTask03Handle;
 osThreadId myTask04Handle;
+osThreadId producer1Handle;
+osThreadId producer2Handle;
+osThreadId consumer1Handle;
+osThreadId consumer2Handle;
 osMutexId myMutex01Handle;
+osMutexId bufferMutexHandle;
+osSemaphoreId semFullHandle;	// Tracks full spots
+osSemaphoreId semEmptyHandle;	// Tracks empty spots
 /* USER CODE BEGIN PV */
 SemaphoreHandle_t xSemaphore;
+
+int buffer[BUFFER_SIZE];
+int in = 0;
+int out = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -61,6 +74,8 @@ void StartDefaultTask(void const * argument);
 void StartTask02(void const * argument);
 void StartTask03(void const * argument);
 void StartTask04(void const * argument);
+void ProducerTask(void const * argument);
+void ConsumerTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -110,14 +125,30 @@ int main(void)
   osMutexDef(myMutex01);
   myMutex01Handle = osMutexCreate(osMutex(myMutex01));
 
+  /* definition and creation of bufferMutex */
+  osMutexDef(bufferMutex);
+  bufferMutexHandle = osMutexCreate(osMutex(bufferMutex));
+
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
+
+  /* Create the semaphores(s) */
+  /* definition and creation of semFull */
+  osSemaphoreDef(semFull);
+  semFullHandle = osSemaphoreCreate(osSemaphore(semFull), BUFFER_SIZE);
+  for (int i = 0; i < BUFFER_SIZE; i++) {
+        osSemaphoreWait(semFullHandle, 0); // Consume all full places, to init count at 0
+  }
+  /* definition and creation of semEmpty */
+  osSemaphoreDef(semEmpty);
+  semEmptyHandle = osSemaphoreCreate(osSemaphore(semEmpty), BUFFER_SIZE);
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
   xSemaphore = xSemaphoreCreateBinary();
   xSemaphoreGive(xSemaphore);
+
   /* USER CODE END RTOS_SEMAPHORES */
 
   /* USER CODE BEGIN RTOS_TIMERS */
@@ -144,6 +175,22 @@ int main(void)
   /* definition and creation of myTask04 */
   osThreadDef(myTask04, StartTask04, osPriorityIdle, 0, 128);
   myTask04Handle = osThreadCreate(osThread(myTask04), NULL);
+
+  /* definition and creation of producer1 */
+  osThreadDef(producer1, ProducerTask, osPriorityNormal, 0, 128);
+  producer1Handle = osThreadCreate(osThread(producer1), (void*)1);
+
+  /* definition and creation of producer2 */
+  osThreadDef(producer2, ProducerTask, osPriorityNormal, 0, 128);
+  producer2Handle = osThreadCreate(osThread(producer2), (void*)2);
+
+  /* definition and creation of consumer1 */
+  osThreadDef(consumer1, ConsumerTask, osPriorityNormal, 0, 128);
+  consumer1Handle = osThreadCreate(osThread(consumer1), (void*)1);
+
+  /* definition and creation of consumer2 */
+  osThreadDef(consumer2, ConsumerTask, osPriorityNormal, 0, 128);
+  consumer2Handle = osThreadCreate(osThread(consumer2), (void*)2);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -418,6 +465,65 @@ void StartTask04(void const * argument)
 	  } // No else, task is blocked
   }
   /* USER CODE END StartTask04 */
+}
+
+/* USER CODE BEGIN Header_ProducerTask */
+/**
+* @brief Function implementing the producer1 thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_ProducerTask */
+void ProducerTask(void const * argument)
+{
+  /* USER CODE BEGIN ProducerTask */
+  int id = (int)argument;
+  char stringBuffer[25];
+  sprintf(stringBuffer, " + Produced by %d \r\n", id);
+  uint32_t value = 0;
+  /* Infinite loop */
+  for(;;)
+  {
+	value++;  										// Simulate data generation
+	osSemaphoreWait(semEmptyHandle, osWaitForever); // Wait, if buffer full
+	osMutexWait(bufferMutexHandle, osWaitForever);  // Lock buffer
+	buffer[in] = value;
+	HAL_UART_Transmit(&huart2, (uint8_t*)stringBuffer, strlen(stringBuffer), HAL_MAX_DELAY);
+	in = (in + 1) % BUFFER_SIZE;
+	osMutexRelease(bufferMutexHandle);              // Unlock buffer
+	osSemaphoreRelease(semFullHandle);              // Signal new item
+    osDelay(5000);
+  }
+  /* USER CODE END ProducerTask */
+}
+
+/* USER CODE BEGIN Header_ConsumerTask */
+/**
+* @brief Function implementing the consumer1 thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_ConsumerTask */
+void ConsumerTask(void const * argument)
+{
+  /* USER CODE BEGIN ConsumerTask */
+  int id = (int)argument;
+  char stringBuffer[25];
+  sprintf(stringBuffer, " --- Consumed by %d \r\n", id);
+  uint32_t value;
+  /* Infinite loop */
+  for(;;)
+  {
+	osSemaphoreWait(semFullHandle, osWaitForever); // Wait for data
+	osMutexWait(bufferMutexHandle, osWaitForever); // Lock buffer
+	value = buffer[out];
+	HAL_UART_Transmit(&huart2, (uint8_t*)stringBuffer, strlen(stringBuffer), HAL_MAX_DELAY);
+	out = (out + 1) % BUFFER_SIZE;
+	osMutexRelease(bufferMutexHandle); 			   // Unlock buffer
+	osSemaphoreRelease(semEmptyHandle); 		   // Signal space available
+    osDelay(5000);
+  }
+  /* USER CODE END ConsumerTask */
 }
 
 /**
