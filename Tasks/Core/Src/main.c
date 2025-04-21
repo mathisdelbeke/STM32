@@ -19,7 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
-
+#include <stdio.h>
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -44,9 +44,9 @@
 UART_HandleTypeDef huart2;
 
 osThreadId defaultTaskHandle;
-osThreadId uartTaskHandle;
+osMessageQId myQueue01Handle;
 /* USER CODE BEGIN PV */
-
+osThreadId uartTaskHandle;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -54,10 +54,9 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 void StartDefaultTask(void const * argument);
-void StartUartTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
-
+void StartUartTask(void const * argument);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -111,6 +110,11 @@ int main(void)
   /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
 
+  /* Create the queue(s) */
+  /* definition and creation of myQueue01 */
+  osMessageQDef(myQueue01, 16, uint8_t);
+  myQueue01Handle = osMessageCreate(osMessageQ(myQueue01), NULL);
+
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
@@ -119,10 +123,11 @@ int main(void)
   /* definition and creation of defaultTask */
   osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
+
   /* USER CODE BEGIN RTOS_THREADS */
+  /* add threads, ... */
   osThreadDef(uartTask, StartUartTask, osPriorityNormal, 0, 128);
   uartTaskHandle = osThreadCreate(osThread(uartTask), NULL);
-  /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
 
   /* Start scheduler */
@@ -262,10 +267,16 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void StartUartTask(void const * argument)
 {
-  char msg[] = "Hello from UART Task\r\n";
+  osEvent evt;
+  char msg[30];
   for(;;)
   {
-    HAL_UART_Transmit(&huart2, (uint8_t*)msg, sizeof(msg)-1, HAL_MAX_DELAY);
+	evt = osMessageGet(myQueue01Handle, osWaitForever);
+	if (evt.status == osEventMessage) {
+		uint8_t receivedData = (uint8_t)(evt.value.v);
+		sprintf(msg, "UART Task received: %d \r\n", receivedData);
+		HAL_UART_Transmit(&huart2, (uint8_t*)msg, sizeof(msg)-1, HAL_MAX_DELAY);
+	}
     osDelay(2000); // 2 second delay
   }
 }
@@ -281,11 +292,14 @@ void StartUartTask(void const * argument)
 void StartDefaultTask(void const * argument)
 {
   /* USER CODE BEGIN 5 */
+  uint8_t dataToSend = 0;
   /* Infinite loop */
   for(;;)
   {
+	osMessagePut(myQueue01Handle, dataToSend, osWaitForever);
+	dataToSend++;
 	HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-    osDelay(1000);
+    osDelay(2000);
   }
   /* USER CODE END 5 */
 }
